@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <title>تحويل الصوت إلى نص</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            direction: rtl;
+            text-align: center;
+            background-color: #f9f9f9;
+            padding: 40px;
+        }
+        h1 {
+            color: #333;
+        }
+        button, input[type="file"] {
+            padding: 10px 20px;
+            margin: 10px;
+            font-size: 18px;
+            border-radius: 8px;
+            border: none;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #result {
+            margin-top: 30px;
+            font-size: 22px;
+            color: green;
+        }
+    </style>
+</head>
+<body>
+    <h1>تحويل الصوت إلى نص</h1>
+
+    <!-- أزرار التسجيل -->
+    <button onclick="startRecording()">🎙️ ابدأ التسجيل</button>
+    <button onclick="stopRecording()">⏹️ أوقف التسجيل</button>
+    <br>
+
+    <!-- رفع ملف صوتي -->
+    <input type="file" id="audio_file" accept="audio/*">
+    <button onclick="uploadFile()">📤 رفع الملف</button>
+    <br>
+
+    <!-- مشغل الصوت -->
+    <audio id="player" controls></audio>
+
+    <!-- النتيجة -->
+    <div id="result"></div>
+
+    <!-- مكتبة Recorder.js -->
+    <script>
+    (function(window){
+        var WORKER_PATH = URL.createObjectURL(new Blob([`
+        var recLength = 0, recBuffers = [], sampleRate;
+
+        self.onmessage = function(e){
+          switch(e.data.command){
+            case 'init': init(e.data.config); break;
+            case 'record': record(e.data.buffer); break;
+            case 'exportWAV': exportWAV(e.data.type); break;
+            case 'clear': clear(); break;
+          }
+        };
+
+        function init(config){ sampleRate = config.sampleRate; }
+        function record(inputBuffer){
+          recBuffers.push(inputBuffer[0]);
+          recLength += inputBuffer[0].length;
+        }
+        function exportWAV(type){
+          var buffer = mergeBuffers(recBuffers, recLength);
+          var dataview = encodeWAV(buffer);
+          var audioBlob = new Blob([dataview], { type: type });
+          self.postMessage(audioBlob);
+        }
+        function clear(){ recLength = 0; recBuffers = []; }
+        function mergeBuffers(recBuffers, recLength){
+          var result = new Float32Array(recLength);
+          var offset = 0;
+          for (var i = 0; i < recBuffers.length; i++){
+            result.set(recBuffers[i], offset);
+            offset += recBuffers[i].length;
+          }
+          return result;
+        }
+        function floatTo16BitPCM(output, offset, input){
+          for (var i = 0; i < input.length; i++, offset+=2){
+            var s = Math.max(-1, Math.min(1, input[i]));
+            output.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+          }
+        }
+        function writeString(view, offset, string){
+          for (var i = 0; i < string.length; i++){
+            view.setUint8(offset + i, string.charCodeAt(i));
+          }
+        }
+        function encodeWAV(samples){
+          var buffer = new ArrayBuffer(44 + samples.length * 2);
+          var view = new DataView(buffer);
+          writeString(view, 0, 'RIFF');
+          view.setUint32(4, 36 + samples.length * 2, true);
+          writeString(view, 8, 'WAVE');
+          writeString(view, 12, 'fmt ');
+
+          view.setUint32(16, 16, true);
+          view.setUint16(20, 1, true);
+          view.setUint16(22, 1, true);
+          view.setUint32(24, sampleRate, true);
+          view.setUint32(28, sampleRate * 2, true);
+          view.setUint16(32, 2, true);
+          view.setUint16(34, 16, true);
+          writeString(view, 36, 'data');
+          view.setUint32(40, samples.length * 2, true);
+          floatTo16BitPCM(view, 44, samples);
+
+          return view;
+        }
+        `], { type: "application/javascript" }));        
+
+        var Recorder = function(source, cfg){
+          var config = cfg || {};
+          var bufferLen = config.bufferLen || 4096;
+          this.context = source.context;
+          this.node = this.context.createScriptProcessor(bufferLen, 2, 2);
+
+          var worker = new Worker(WORKER_PATH);
+          worker.postMessage({
+            command: 'init',
+            config: { sampleRate: this.context.sampleRate }
+          });
+
+          var recording = false, currCallback;
+          this.node.onaudioprocess = function(e){
+            if (!recording) return;
+            var buffer = [
+              e.inputBuffer.getChannelData(0),
+              e.inputBuffer.getChannelData(1)
+            ];
+            worker.postMessage({ command: 'record', buffer: buffer });
+          };
+
+          this.record = () => recording = true;
+          this.stop = () => recording = false;
+          this.clear = () => worker.postMessage({ command: 'clear' });
+          this.exportWAV = function(cb, type){
+            currCallback = cb;
+            type = type || 'audio/wav';
+            worker.postMessage({ command: 'exportWAV', type: type });
+          };
+          worker.onmessage = function(e){ currCallback(e.data); };
+
+          source.connect(this.node);
+          this.node.connect(this.context.destination);
+        };
+
+        window.Recorder = Recorder;
+    })(window);
+    </script>
+
+    <!-- كود التحكم -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ffmpeg.js/4.0.0/ffmpeg.min.js"></script>
+
+    <script>
+        let recorder, audioContext, stream;
+
+        async function startRecording() {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const input = audioContext.createMediaStreamSource(stream);
+            recorder = new Recorder(input, { numChannels: 1 });
+            recorder.record();
+            document.getElementById('result').innerText = '🎙️ جاري التسجيل...';
+        }
+
+        function stopRecording() {
+            recorder.stop();
+            stream.getAudioTracks()[0].stop();
+
+            recorder.exportWAV(blob => {
+                const url = URL.createObjectURL(blob);
+                document.getElementById('player').src = url;
+
+                const formData = new FormData();
+                formData.append("audio_file", blob, "recording.wav");
+
+                fetch("/convert", {
+                    method: "POST",
+                    body: formData
+                })
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('result').innerText = data.text ? "✅ النص: " + data.text : "❌ خطأ: " + data.error;
+                });
+            });
+        }
+
+        function uploadFile() {
+            const fileInput = document.getElementById("audio_file");
+            const file = fileInput.files[0];
+            if (!file) {
+                alert("من فضلك اختر ملف صوتي");
+                return;
+            }
+
+            // إذا كان الملف غير بصيغة WAV، نقوم بتحويله باستخدام FFmpeg.js
+            if (file.type !== 'audio/wav') {
+                document.getElementById('result').innerText = "🔄 جاري التحويل...";
+                const reader = new FileReader();
+
+                reader.onload = function(event) {
+                    const fileData = new Uint8Array(event.target.result);
+                    const ffmpeg = FFmpeg.createFFmpeg({ log: true });
+
+                    ffmpeg.load().then(() => {
+                        ffmpeg.FS('writeFile', 'input.mp3', fileData);
+                        ffmpeg.run('-i', 'input.mp3', 'output.wav').then(() => {
+                            const output = ffmpeg.FS('readFile', 'output.wav');
+                            const audioBlob = new Blob([output], { type: 'audio/wav' });
+                            const audioUrl = URL.createObjectURL(audioBlob);
+                            document.getElementById('player').src = audioUrl;
+
+                            const formData = new FormData();
+                            formData.append("audio_file", audioBlob);
+
+                            fetch("/convert", {
+                                method: "POST",
+                                body: formData
+                            })
+                            .then(res => res.json())
+                            .then(data => {
+                                document.getElementById('result').innerText = data.text ? "✅ النص: " + data.text : "❌ خطأ: " + data.error;
+                            });
+                        });
+                    });
+                };
+
+                reader.readAsArrayBuffer(file);
+            } else {
+                // إذا كان الملف بصيغة WAV، نرفعه مباشرة
+                document.getElementById('player').src = URL.createObjectURL(file);
+                document.getElementById('result').innerText = "🔄 جاري التحويل...";
+
+                const formData = new FormData();
+                formData.append("audio_file", file);
+
+                fetch("/convert", {
+                    method: "POST",
+                    body: formData
+                })
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('result').innerText = data.text ? "✅ النص: " + data.text : "❌ خطأ: " + data.error;
+                });
+            }
+        }
+    </script>
+</body>
+</html>

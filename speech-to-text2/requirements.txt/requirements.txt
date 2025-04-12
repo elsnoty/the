@@ -1,0 +1,6 @@
+Flask
+SpeechRecognition
+pydub
+noisereduce
+scipy
+numpy
