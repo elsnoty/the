@@ -10,8 +10,6 @@ def home():
 @app.route('/convert', methods=['POST'])
 def convert():
     audio_file = request.files['audio_file']
-    
-    # استخدم SpeechRecognition لتحويل الصوت إلى نص
     recognizer = sr.Recognizer()
     with sr.AudioFile(audio_file) as source:
         audio = recognizer.record(source)
@@ -20,9 +18,9 @@ def convert():
         text = recognizer.recognize_google(audio, language='ar-AR')
         return {'text': text}
     except sr.UnknownValueError:
-        return {'error': 'لم يتمكن من التعرف على الصوت'}
+        return {'error': 'Could not understand the audio'}
     except sr.RequestError as e:
-        return {'error': f'خطأ في الطلب: {e}'}
+        return {'error': f'Request error: {e}'}
 
 if __name__ == "__main__":
     app.run(debug=True)
