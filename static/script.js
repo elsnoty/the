@@ -106,96 +106,40 @@ function uploadFile() {
         </div>
     `;
 
-    // If the file is not WAV, convert using FFmpeg.js
-    if (file.type !== 'audio/wav') {
-        const reader = new FileReader();
+    // Play the audio preview
+    document.getElementById('player').src = URL.createObjectURL(file);
 
-        reader.onload = function(event) {
-            const fileData = new Uint8Array(event.target.result);
-            const ffmpeg = FFmpeg.createFFmpeg({ log: true });
+    const formData = new FormData();
+    formData.append("audio_file", file);
 
-            ffmpeg.load().then(() => {
-                ffmpeg.FS('writeFile', 'input.mp3', fileData);
-                ffmpeg.run('-i', 'input.mp3', 'output.wav').then(() => {
-                    const output = ffmpeg.FS('readFile', 'output.wav');
-                    const audioBlob = new Blob([output], { type: 'audio/wav' });
-                    const audioUrl = URL.createObjectURL(audioBlob);
-                    document.getElementById('player').src = audioUrl;
-
-                    const formData = new FormData();
-                    formData.append("audio_file", audioBlob);
-
-                    fetch("/convert", {
-                        method: "POST",
-                        body: formData
-                    })
-                    .then(res => res.json())
-                    .then(data => {
-                        if (data.text) {
-                            document.getElementById('result').innerHTML = `
-                                <div class="status success">
-                                    <span class="icon">✅</span>
-                                    ${data.text}
-                                </div>
-                            `;
-                        } else {
-                            document.getElementById('result').innerHTML = `
-                                <div class="status error">
-                                    <span class="icon">❌</span>
-                                    ${data.error || "An error occurred during conversion"}
-                                </div>
-                            `;
-                        }
-                    })
-                    .catch(err => {
-                        document.getElementById('result').innerHTML = `
-                            <div class="status error">
-                                <span class="icon">❌</span>
-                                Connection error: ${err.message}
-                            </div>
-                        `;
-                    });
-                });
-            });
-        };
-
-        reader.readAsArrayBuffer(file);
-    } else {
-        // If the file is WAV, upload directly
-        document.getElementById('player').src = URL.createObjectURL(file);
-
-        const formData = new FormData();
-        formData.append("audio_file", file);
-
-        fetch("/convert", {
-            method: "POST",
-            body: formData
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (data.text) {
-                document.getElementById('result').innerHTML = `
-                    <div class="status success">
-                        <span class="icon">✅</span>
-                        ${data.text}
-                    </div>
-                `;
-            } else {
-                document.getElementById('result').innerHTML = `
-                    <div class="status error">
-                        <span class="icon">❌</span>
-                        ${data.error || "An error occurred during conversion"}
-                    </div>
-                `;
-            }
-        })
-        .catch(err => {
+    fetch("/convert", {
+        method: "POST",
+        body: formData
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.text) {
+            document.getElementById('result').innerHTML = `
+                <div class="status success">
+                    <span class="icon">✅</span>
+                    ${data.text}
+                </div>
+            `;
+        } else {
             document.getElementById('result').innerHTML = `
                 <div class="status error">
                     <span class="icon">❌</span>
-                    Connection error: ${err.message}
+                    ${data.error || "An error occurred during conversion"}
                 </div>
             `;
-        });
-    }
+        }
+    })
+    .catch(err => {
+        document.getElementById('result').innerHTML = `
+            <div class="status error">
+                <span class="icon">❌</span>
+                Connection error: ${err.message}
+            </div>
+        `;
+    });
 }
